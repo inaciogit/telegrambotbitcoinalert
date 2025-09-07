@@ -2,7 +2,7 @@
 env/
 .venv/
 ENV/
-
+.env
 # Ignorar arquivos temporários e de sistema
 __pycache__/
 *.pyc
