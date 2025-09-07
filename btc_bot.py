@@ -2,28 +2,34 @@ import asyncio
 import requests
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  # Necessário para ambientes sem GUI
 import matplotlib.pyplot as plt
 import logging
+import os
 from telegram import Bot
 from telegram.error import TelegramError
-import os
 
 # ======================
 # CONFIGURAÇÕES
 # ======================
-BINANCE_API = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=500"     
+BINANCE_API = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=500"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+# Verifica se as variáveis essenciais estão definidas
+if not TELEGRAM_TOKEN or not CHAT_ID:
+    raise EnvironmentError("❌ Variáveis TELEGRAM_TOKEN e CHAT_ID são obrigatórias. Configure-as no Railway ou .env local.")
+
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Configuração de logs
+# Configuração de logs (arquivo + console)
 logging.basicConfig(
-    filename='bot.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8'
+    handlers=[
+        logging.FileHandler("bot.log", encoding='utf-8'),
+        logging.StreamHandler()  # Mostra logs no terminal também
+    ]
 )
 
 # Histórico de preços
@@ -33,9 +39,9 @@ df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"
 # FUNÇÃO: pegar dados OHLCV da Binance
 # ======================
 def get_btc_ohlcv():
-    print("[INFO] Consultando OHLCV BTC/USDT na Binance...")
+    logging.info("[INFO] Consultando OHLCV BTC/USDT na Binance...")
     try:
-        response = requests.get(BINANCE_API, timeout=10)
+        response = requests.get(BINANCE_API, timeout=15)
         response.raise_for_status()
         data = response.json()
         processed = []
@@ -49,11 +55,10 @@ def get_btc_ohlcv():
                 "volume": float(d[5])
             })
         df_temp = pd.DataFrame(processed)
-        print("[OK] Dados obtidos com sucesso.")
+        logging.info("[OK] Dados obtidos com sucesso.")
         return df_temp
     except Exception as e:
-        print(f"[ERRO] Falha ao pegar OHLCV: {e}")
-        logging.error(f"Falha ao obter dados da Binance: {e}")
+        logging.error(f"[ERRO] Falha ao pegar OHLCV: {e}")
         return None
 
 # ======================
@@ -62,11 +67,9 @@ def get_btc_ohlcv():
 async def send_message(text):
     try:
         await bot.send_message(chat_id=CHAT_ID, text=text)
-        print("[OK] Mensagem enviada no Telegram.")
-        logging.info(f"Mensagem enviada: {text[:100]}...")
+        logging.info("[OK] Mensagem enviada no Telegram.")
     except TelegramError as e:
-        print(f"[ERRO Telegram] {e}")
-        logging.error(f"Erro ao enviar mensagem: {e}")
+        logging.error(f"[ERRO Telegram] {e}")
         await asyncio.sleep(5)
 
 # ======================
@@ -76,14 +79,11 @@ async def send_chart_if_exists():
     try:
         with open("btc_chart.png", "rb") as photo:
             await bot.send_photo(chat_id=CHAT_ID, photo=photo)
-        print("[OK] Gráfico enviado.")
-        logging.info("Gráfico enviado com sucesso.")
+        logging.info("[OK] Gráfico enviado.")
     except FileNotFoundError:
-        print("[ERRO] Gráfico não encontrado.")
-        logging.error("Gráfico btc_chart.png não encontrado.")
+        logging.error("[ERRO] Gráfico btc_chart.png não encontrado.")
     except TelegramError as e:
-        print(f"[ERRO ao enviar gráfico] {e}")
-        logging.error(f"Erro ao enviar gráfico: {e}")
+        logging.error(f"[ERRO ao enviar gráfico] {e}")
 
 # ======================
 # FUNÇÃO: calcular ADX (Average Directional Index)
@@ -122,7 +122,7 @@ def calculate_indicators(df):
 
     # Verifica tamanho mínimo para cálculos
     if len(df) < 50:
-        return [], "neutral", 0
+        return [], "neutral", 0.0
 
     # --- SMA 5, 20, 50, 200 ---
     df["SMA_5"] = df["close"].rolling(5).mean()
@@ -193,7 +193,7 @@ def calculate_indicators(df):
 
     # --- ADX ---
     df = calculate_adx(df, 14)
-    adx_value = df["ADX"].iloc[-1] if len(df) >= 30 else 0
+    adx_value = df["ADX"].iloc[-1] if len(df) >= 30 else 0.0
 
     # --- Tendência ---
     trend = "neutral"
@@ -224,10 +224,14 @@ def generate_chart(df):
     try:
         plt.figure(figsize=(12, 6))
         plt.plot(df["timestamp"], df["close"], label="Close", color='blue', linewidth=2)
-        plt.plot(df["timestamp"], df["SMA_5"], label="SMA 5", color='orange', alpha=0.8)
-        plt.plot(df["timestamp"], df["SMA_20"], label="SMA 20", color='green', alpha=0.8)
-        plt.plot(df["timestamp"], df["SMA_50"], label="SMA 50", color='red', linestyle='--', alpha=0.7)
-        plt.fill_between(df["timestamp"], df["BB_upper"], df["BB_lower"], color="gray", alpha=0.1, label="Bollinger Bands")
+        if "SMA_5" in df.columns:
+            plt.plot(df["timestamp"], df["SMA_5"], label="SMA 5", color='orange', alpha=0.8)
+        if "SMA_20" in df.columns:
+            plt.plot(df["timestamp"], df["SMA_20"], label="SMA 20", color='green', alpha=0.8)
+        if "SMA_50" in df.columns:
+            plt.plot(df["timestamp"], df["SMA_50"], label="SMA 50", color='red', linestyle='--', alpha=0.7)
+        if "BB_upper" in df.columns and "BB_lower" in df.columns:
+            plt.fill_between(df["timestamp"], df["BB_upper"], df["BB_lower"], color="gray", alpha=0.1, label="Bollinger Bands")
         plt.title("BTC/USDT Análise Técnica (15m)")
         plt.legend()
         plt.grid(True, alpha=0.3)
@@ -235,17 +239,16 @@ def generate_chart(df):
         plt.tight_layout()
         plt.savefig("btc_chart.png", dpi=150)
         plt.close()
-        print("[OK] Gráfico gerado com sucesso.")
+        logging.info("[OK] Gráfico gerado com sucesso.")
     except Exception as e:
-        print(f"[ERRO ao gerar gráfico] {e}")
-        logging.error(f"Erro ao gerar gráfico: {e}")
+        logging.error(f"[ERRO ao gerar gráfico] {e}")
 
 # ======================
 # LOOP PRINCIPAL
 # ======================
 async def main():
+    logging.info("🚀 Bot iniciado. Monitorando BTC/USDT (15m)...")
     print("🚀 Bot iniciado. Monitorando BTC/USDT (15m)...")
-    logging.info("Bot iniciado.")
 
     while True:
         try:
@@ -255,6 +258,14 @@ async def main():
                 df = df_data
 
                 indicators, trend, adx = calculate_indicators(df)
+
+                # --- FORÇAR SINAL PARA TESTE (descomente para testar envio) ---
+                # if not indicators and len(df) > 50:
+                #     logging.info("[TESTE] Forçando sinal de compra para validação...")
+                #     indicators = ["SMA Buy (teste)", "RSI Oversold Buy (teste)"]
+                #     trend = "bull"
+                #     adx = 30.0
+                # ---
 
                 # Só envia alerta se tiver 2+ indicadores relevantes (exceto volume)
                 trade_signals = [s for s in indicators if "Buy" in s or "Sell" in s]
@@ -271,18 +282,15 @@ async def main():
                     await send_message(msg)
                     generate_chart(df)
                     await send_chart_if_exists()
-
                     logging.info(f"ALERTA ENVIADO: {msg}")
                 else:
-                    print(f"[INFO] {len(indicators)} indicadores, mas apenas {len(trade_signals)} de trade. Ignorando (mínimo: 2).")
-                    logging.info(f"Indicadores detectados: {indicators}, mas insuficientes para alerta.")
+                    logging.info(f"[INFO] {len(indicators)} indicadores, mas apenas {len(trade_signals)} de trade. Ignorando (mínimo: 2).")
 
             else:
-                print("[AVISO] Dados não disponíveis. Tentando novamente...")
+                logging.warning("[AVISO] Dados não disponíveis. Tentando novamente...")
 
         except Exception as e:
-            print(f"[ERRO CRÍTICO NO LOOP] {e}")
-            logging.error(f"Erro no loop principal: {e}")
+            logging.critical(f"[ERRO CRÍTICO NO LOOP] {e}")
 
         await asyncio.sleep(60)  # Checa a cada 1 minuto
 
@@ -293,8 +301,8 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        logging.info("🛑 Bot interrompido manualmente.")
         print("\n🛑 Bot interrompido manualmente.")
-        logging.info("Bot interrompido pelo usuário.")
     except Exception as e:
+        logging.critical(f"[ERRO FATAL] {e}")
         print(f"[ERRO FATAL] {e}")
-        logging.critical(f"Erro fatal: {e}")
