@@ -1,0 +1,13 @@
+# Ignorar ambiente virtual
+env/
+.venv/
+ENV/
+
+# Ignorar arquivos temporários e de sistema
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.idea/
+*.log
+btc_chart.png

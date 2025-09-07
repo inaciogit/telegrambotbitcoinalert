@@ -1,0 +1,5 @@
+requests
+pandas
+matplotlib
+python-telegram-bot==13.15
+schedule
